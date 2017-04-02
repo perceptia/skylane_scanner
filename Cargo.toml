@@ -1,0 +1,21 @@
+[package]
+name = "skylane_scanner"
+version = "0.0.1"
+description = "Marshalling code generator for skylane/wayland"
+homepage = "https://github.com/perceptia/skylane_scanner"
+repository = "https://github.com/perceptia/skylane_scanner"
+keywords = ["skylane", "wayland", "protocol"]
+categories = ["gui"]
+license = "MIT"
+authors = ["Wojciech Kluczka <wojciech.kluczka@gmail.com>"]
+
+[dependencies]
+xml-rs = "0.3"
+
+[lib]
+name = "skylane_scanner"
+path = "src/lib.rs"
+
+[[bin]]
+name = "skylane_scanner"
+path = "src/bin.rs"
