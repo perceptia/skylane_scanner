@@ -1,4 +1,4 @@
-// Copyright 2016 The Perceptia Project Developers
+// Copyright 2016-2017 The Perceptia Project Developers
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 // and associated documentation files (the "Software"), to deal in the Software without
@@ -30,17 +30,25 @@ use xml::reader::{EventReader, XmlEvent};
 
 // -------------------------------------------------------------------------------------------------
 
+/// Error enumeration for scanner.
 #[derive(Debug)]
 #[allow(unreachable_patterns)] // NOTE: Compiler bug: issue #38885
 pub enum Error {
+    /// Wrapper for `std::io::Error`.
     IO(std::io::Error),
+
+    /// Wrapper for `xml::reader::Error`.
     Xml(xml::reader::Error),
+
+    /// Wrapper for `std::num::ParseIntError`.
     ParseInt(std::num::ParseIntError),
+
+    /// Wrapper for `std::string::ParseError`.
     ParseStr(std::string::ParseError),
+
+    /// Emitted when came across unexpected element during parsing XML.
     Element(String),
 }
-
-// -------------------------------------------------------------------------------------------------
 
 impl std::convert::From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
@@ -48,23 +56,17 @@ impl std::convert::From<std::io::Error> for Error {
     }
 }
 
-// -------------------------------------------------------------------------------------------------
-
 impl std::convert::From<xml::reader::Error> for Error {
     fn from(error: xml::reader::Error) -> Self {
         Error::Xml(error)
     }
 }
 
-// -------------------------------------------------------------------------------------------------
-
 impl std::convert::From<std::num::ParseIntError> for Error {
     fn from(error: std::num::ParseIntError) -> Self {
         Error::ParseInt(error)
     }
 }
-
-// -------------------------------------------------------------------------------------------------
 
 impl std::convert::From<std::string::ParseError> for Error {
     fn from(error: std::string::ParseError) -> Self {
@@ -159,6 +161,7 @@ struct Document {
 // -------------------------------------------------------------------------------------------------
 
 impl Document {
+    /// Constructs new `Document`.
     pub fn new() -> Self {
         Document {
             description: Text::new(None),
@@ -167,12 +170,21 @@ impl Document {
             interfaces: Vec::new(),
         }
     }
+
+    /// Swaps requests with events. Generated code for client and server should differ only in that
+    /// server events are client requests and vice versa.
+    pub fn swap_messages(&mut self) {
+        for ref mut interface in self.interfaces.iter_mut() {
+            interface.swap_messages();
+        }
+    }
 }
 
 // -------------------------------------------------------------------------------------------------
 
 /// Structure representing text tags of protocol definition XML file (like "description" or
 /// "copyright").
+#[derive(Clone)]
 struct Text {
     text: Option<String>,
 }
@@ -192,8 +204,8 @@ struct Interface {
     name: String,
     version: u32,
     description: Text,
-    requests: Vec<Request>,
-    events: Vec<Event>,
+    requests: Vec<Message>,
+    events: Vec<Message>,
     enums: Vec<Enum>,
 }
 
@@ -210,35 +222,21 @@ impl Interface {
             enums: Vec::new(),
         }
     }
-}
 
-// -------------------------------------------------------------------------------------------------
-
-/// Structure representing "request" tag of protocol definition XML file.
-struct Request {
-    name: String,
-    opcode: u16,
-    description: Text,
-    arguments: Vec<Argument>,
-}
-
-// -------------------------------------------------------------------------------------------------
-
-impl Request {
-    pub fn new(name: String, opcode: u16) -> Self {
-        Request {
-            name: name,
-            opcode: opcode,
-            description: Text::new(None),
-            arguments: Vec::new(),
-        }
+    /// Swaps requests with events. Generated code for client and server should differ only in that
+    /// server events are client requests and vice versa.
+    pub fn swap_messages(&mut self) {
+        let events = self.events.clone();
+        self.events = self.requests.clone();
+        self.requests = events;
     }
 }
 
 // -------------------------------------------------------------------------------------------------
 
-/// Structure representing "event" tag of protocol definition XML file.
-struct Event {
+/// Structure representing "request" or "event" tags of protocol definition XML file.
+#[derive(Clone)]
+struct Message {
     name: String,
     opcode: u16,
     description: Text,
@@ -247,9 +245,9 @@ struct Event {
 
 // -------------------------------------------------------------------------------------------------
 
-impl Event {
+impl Message {
     pub fn new(name: String, opcode: u16) -> Self {
-        Event {
+        Message {
             name: name,
             opcode: opcode,
             description: Text::new(None),
@@ -261,6 +259,7 @@ impl Event {
 // -------------------------------------------------------------------------------------------------
 
 /// Structure representing "arg" tag of protocol definition XML file.
+#[derive(Clone)]
 struct Argument {
     name: String,
     rust_type: RustType,
@@ -384,7 +383,7 @@ impl RustType {
             RustType::Int => "i32",
             RustType::Fixed => "f32",
             RustType::String => "String",
-            RustType::Array => "&[u32]",
+            RustType::Array => "Vec<u32>",
             RustType::FD => "RawFd",
         }
     }
@@ -409,7 +408,7 @@ impl RustType {
 mod util {
     use super::{Error, OwnedAttribute};
 
-    /// Searches given mendatory attribute in attribute list and return value.
+    /// Searches given mandatory attribute in attribute list and return value.
     pub fn get_attr(name: &str, attributes: &Vec<OwnedAttribute>) -> Result<String, Error> {
         for attr in attributes {
             if attr.name.local_name == name {
@@ -517,25 +516,17 @@ impl Buffer {
 
 // -------------------------------------------------------------------------------------------------
 
-/// Trait for code generators.
-trait Generator {
-    fn new(indent: u32) -> Self;
-    fn generate(&mut self, document: &Document) -> String;
-}
-
-// -------------------------------------------------------------------------------------------------
-
-/// Generator for server-side code.
-struct ServerGenerator {
+/// Generator for server- and client-side code.
+struct Generator {
     buffer: Buffer,
 }
 
 // -------------------------------------------------------------------------------------------------
 
-impl Generator for ServerGenerator {
-    /// Creates new `ServerGenerator`.
+impl Generator {
+    /// Creates new `Generator`.
     fn new(indent: u32) -> Self {
-        ServerGenerator { buffer: Buffer::new(indent) }
+        Generator { buffer: Buffer::new(indent) }
     }
 
     /// Returns generated code as string basing on protocol description.
@@ -556,7 +547,7 @@ impl Generator for ServerGenerator {
 
 // -------------------------------------------------------------------------------------------------
 
-impl ServerGenerator {
+impl Generator {
     fn generate_module(&mut self, protocol_name: &str, interface: &Interface) {
         self.generate_module_start(&interface);
         self.generate_enums(&interface);
@@ -612,7 +603,7 @@ impl ServerGenerator {
 
 // -------------------------------------------------------------------------------------------------
 
-impl ServerGenerator {
+impl Generator {
     fn generate_module_start(&mut self, interface: &Interface) {
         self.buffer
             .push_end_of_line()
@@ -637,12 +628,15 @@ impl ServerGenerator {
         if Self::check_if_needs_read_bytes_ext(interface) {
             self.buffer.push_line("use byteorder::ReadBytesExt;");
         }
+        if Self::check_if_needs_socket(interface) {
+            self.buffer.push_line("use super::super::Socket;");
+        }
 
         // Other imports.
         self.buffer
             .push_line("use byteorder::NativeEndian;")
-            .push_line("use skylane::common::{SkylaneError, Header, ObjectId};")
-            .push_line("use skylane::server::{ClientSocket, Task};")
+            .push_line("use super::super::{SkylaneError, Header, ObjectId};")
+            .push_line("use super::super::{Bundle, Task};")
             .push_line("use super::super::Dispatcher as Disp;")
             .push_end_of_line()
             .push_indent()
@@ -712,7 +706,7 @@ impl ServerGenerator {
             .increase_indent()
             .push_line("&mut self,")
             .push_line("this_object_id: ObjectId,")
-            .push_line("socket: &mut ClientSocket,");
+            .push_line("bundle: &mut Bundle,");
     }
 
     fn generate_request_end(&mut self) {
@@ -724,10 +718,10 @@ impl ServerGenerator {
             .push_end_of_line()
             .push_indent()
             .push("pub fn ")
-            .push(name)
+            .push(util::validate_name(name))
             .push(" (\n")
             .increase_indent()
-            .push_line("_socket: &ClientSocket,")
+            .push_line("_socket: &Socket,")
             .push_line("_id: ObjectId,");
 
     }
@@ -760,7 +754,7 @@ impl ServerGenerator {
         self.buffer.push_indent().push(name).push(": ").push(rust_type.to_output_str()).push(",\n");
     }
 
-    fn generate_event_body(&mut self, event: &Event) {
+    fn generate_event_body(&mut self, event: &Message) {
         // Prepare sizes
         let message_size = MessageSize::from_arguments(&event.arguments);
 
@@ -819,8 +813,7 @@ impl ServerGenerator {
                             .push("_size = 4 * _")
                             .push(name)
                             .push("_len;")
-                            .push_end_of_line()
-                            .push_indent();
+                            .push_end_of_line();
                         sizes.push_str(" + _");
                         sizes.push_str(name);
                         sizes.push_str("_size");
@@ -1005,7 +998,7 @@ impl ServerGenerator {
             .increase_indent()
             .push_line("&mut self,")
             .push_line("_object: &mut I,")
-            .push_line("_socket: &mut ClientSocket,")
+            .push_line("_bundle: &mut Bundle,")
             .push_line("_header: &Header,")
             .push_line("_bytes_buf: &mut std::io::Cursor<&[u8]>,")
             .push_line("_fds_buf: &mut std::io::Cursor<&[u8]>,")
@@ -1059,7 +1052,7 @@ impl ServerGenerator {
                             .push_indent()
                             .push("let ")
                             .push(&arg.name)
-                            .push(" = (_bytes_buf.read_i32::<NativeEndian>()? as f64) * \
+                            .push(" = (_bytes_buf.read_i32::<NativeEndian>()? as f32) * \
                                    0.00390625;\n");
                     }
                     RustType::String => {
@@ -1108,12 +1101,31 @@ impl ServerGenerator {
                             .increase_indent()
                             .push_line("let _ = _bytes_buf.read_u8()?;")
                             .decrease_indent()
-                            .push_indent()
-                            .push("}\n");
+                            .push_line("}");
                     }
                     RustType::Array => {
-                        // FIXME: Implement reading array.
-                        panic!("Reading array is not yet implemented");
+                        self.buffer
+                            .push_indent()
+                            .push("let _")
+                            .push(&arg.name)
+                            .push("_len = _bytes_buf.read_u32::<NativeEndian>()?;\n")
+                            .push_indent()
+                            .push("let mut ")
+                            .push(&arg.name)
+                            .push(" = Vec::with_capacity(_")
+                            .push(&arg.name)
+                            .push("_len as usize);\n")
+                            .push_indent()
+                            .push("for _ in 0 .. _")
+                            .push(&arg.name)
+                            .push("_len {\n")
+                            .increase_indent()
+                            .push_line("let e = _bytes_buf.read_u32::<NativeEndian>()?;")
+                            .push_indent()
+                            .push(&arg.name)
+                            .push(".push(e);\n")
+                            .decrease_indent()
+                            .push_line("}");
                     }
                     RustType::FD => {
                         self.buffer
@@ -1141,7 +1153,7 @@ impl ServerGenerator {
                 .push_end_of_line()
                 .increase_indent()
                 .push_line("ObjectId::new(_header.object_id),")
-                .push_line("_socket,");
+                .push_line("_bundle,");
 
             for arg in request.arguments.iter() {
                 self.buffer.push_indent().push(&arg.name).push(",\n");
@@ -1171,8 +1183,12 @@ impl ServerGenerator {
                     interface_name: &str,
                     method_name: &str,
                     arguments: &Vec<Argument>) {
+        if incoming {
+            self.buffer.push_line("if let Some(_logger) = _bundle.get_socket().get_logger() {");
+        } else {
+            self.buffer.push_line("if let Some(_logger) = _socket.get_logger() {");
+        }
         self.buffer
-            .push_line("if let Some(_logger) = _socket.get_logger() {")
             .increase_indent()
             .push_indent()
             .push("_logger(format!(\"")
@@ -1214,7 +1230,7 @@ impl ServerGenerator {
 
 // -------------------------------------------------------------------------------------------------
 
-impl ServerGenerator {
+impl Generator {
     fn check_if_needs_write(interface: &Interface) -> bool {
         for event in interface.events.iter() {
             let message_size = MessageSize::from_arguments(&event.arguments);
@@ -1255,7 +1271,11 @@ impl ServerGenerator {
         false
     }
 
-    fn count_raw_fds(event: &Event) -> usize {
+    fn check_if_needs_socket(interface: &Interface) -> bool {
+        interface.events.len() > 0
+    }
+
+    fn count_raw_fds(event: &Message) -> usize {
         let mut count = 0;
         for arg in event.arguments.iter() {
             if arg.rust_type == RustType::FD {
@@ -1263,29 +1283,6 @@ impl ServerGenerator {
             }
         }
         count
-    }
-}
-
-// -------------------------------------------------------------------------------------------------
-
-/// Generator for client-side code.
-struct ClientGenerator {
-    buffer: Buffer,
-}
-
-// -------------------------------------------------------------------------------------------------
-
-// TODO: Finish `ClientGenerator` implementation.
-impl Generator for ClientGenerator {
-    /// Creates new `ClientGenerator`.
-    fn new(indent: u32) -> Self {
-        ClientGenerator { buffer: Buffer::new(indent) }
-    }
-
-    /// Returns generated code as string basing on protocol description.
-    #[allow(unused_variables)] // TODO: Implement generating client code.
-    fn generate(&mut self, document: &Document) -> String {
-        self.buffer.get_content().clone()
     }
 }
 
@@ -1458,8 +1455,8 @@ impl Aggregator {
     fn aggregate_request(&mut self,
                          num: usize,
                          attributes: &Vec<OwnedAttribute>)
-                         -> Result<Request, Error> {
-        let mut request = Request::new(util::get_attr("name", &attributes)?, num as u16);
+                         -> Result<Message, Error> {
+        let mut request = Message::new(util::get_attr("name", &attributes)?, num as u16);
         loop {
             match self.parser.next() {
                 Ok(XmlEvent::StartElement { name, attributes, .. }) => {
@@ -1499,8 +1496,8 @@ impl Aggregator {
     fn aggregate_event(&mut self,
                        num: usize,
                        attributes: &Vec<OwnedAttribute>)
-                       -> Result<Event, Error> {
-        let mut event = Event::new(util::get_attr("name", &attributes)?, num as u16);
+                       -> Result<Message, Error> {
+        let mut event = Message::new(util::get_attr("name", &attributes)?, num as u16);
         loop {
             match self.parser.next() {
                 Ok(XmlEvent::StartElement { name, attributes, .. }) => {
@@ -1619,12 +1616,15 @@ impl Scanner {
 
     /// Generates server-size code.
     pub fn generate_server_interface(&mut self, indent: u32) -> String {
-        ServerGenerator::new(indent).generate(&self.document)
+        Generator::new(indent).generate(&self.document)
     }
 
     /// Generates client-size code.
     pub fn generate_client_interface(&mut self, indent: u32) -> String {
-        ClientGenerator::new(indent).generate(&self.document)
+        self.document.swap_messages();
+        let res = Generator::new(indent).generate(&self.document);
+        self.document.swap_messages();
+        res
     }
 }
 

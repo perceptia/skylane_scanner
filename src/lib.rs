@@ -17,6 +17,8 @@
 
 //! This module parses Wayland protocol definition in XML file and generates Skylane implementation.
 
+#![warn(missing_docs)]
+
 extern crate xml;
 
 pub mod scanner;
