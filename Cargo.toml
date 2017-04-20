@@ -1,6 +1,6 @@
 [package]
 name = "skylane_scanner"
-version = "0.0.1"
+version = "0.1.0"
 description = "Marshalling code generator for skylane/wayland"
 homepage = "https://github.com/perceptia/skylane_scanner"
 repository = "https://github.com/perceptia/skylane_scanner"
