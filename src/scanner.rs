@@ -18,7 +18,6 @@
 //! This module parses Wayland protocol definition in XML file and generates Skylane implementation.
 
 // TODO: Divide this file into more modules.
-// TODO: Generate comments along the code to provide documentation.
 
 use std;
 use std::fs::File;
@@ -305,15 +304,17 @@ impl Enum {
 struct Entry {
     name: String,
     value: String,
+    summary: Text,
 }
 
 // -------------------------------------------------------------------------------------------------
 
 impl Entry {
-    pub fn new(name: String, value: String) -> Self {
+    pub fn new(name: String, value: String, summary: Option<String>) -> Self {
         Entry {
             name: name,
             value: value,
+            summary: Text::new(summary),
         }
     }
 }
@@ -558,9 +559,9 @@ impl Generator {
     }
 
     fn generate_enums(&mut self, interface: &Interface) {
-        for e in interface.enums.iter() {
-            self.generate_enum_start(&e.name);
-            for entry in e.entries.iter() {
+        for enumeration in interface.enums.iter() {
+            self.generate_enum_start(&enumeration);
+            for entry in enumeration.entries.iter() {
                 self.generate_entry(&entry);
             }
             self.generate_enum_end();
@@ -568,14 +569,14 @@ impl Generator {
     }
 
     fn generate_interface(&mut self, interface: &Interface) {
-        self.generate_interface_start();
+        self.generate_interface_start(&interface);
         self.generate_requests(&interface);
         self.generate_interface_end();
     }
 
     fn generate_requests(&mut self, interface: &Interface) {
         for request in interface.requests.iter() {
-            self.generate_request_start(&request.name);
+            self.generate_request_start(&request);
             for argument in request.arguments.iter() {
                 self.generate_output_argument(&argument.name, argument.rust_type);
             }
@@ -585,7 +586,7 @@ impl Generator {
 
     fn generate_events(&mut self, protocol_name: &str, interface: &Interface) {
         for event in interface.events.iter() {
-            self.generate_event_start(&event.name);
+            self.generate_event_start(&event);
             for argument in event.arguments.iter() {
                 self.generate_input_argument(&argument);
             }
@@ -605,8 +606,9 @@ impl Generator {
 
 impl Generator {
     fn generate_module_start(&mut self, interface: &Interface) {
+        self.buffer.push_end_of_line();
+        self.generate_comment(&interface.description);
         self.buffer
-            .push_end_of_line()
             .push_indent()
             .push("pub mod ")
             .push(&interface.name)
@@ -639,11 +641,13 @@ impl Generator {
             .push_line("use super::super::{Bundle, Task};")
             .push_line("use super::super::Dispatcher as Disp;")
             .push_end_of_line()
+            .push_line("/// Interface name")
             .push_indent()
             .push("pub const NAME: &'static str = \"")
             .push(&interface.name)
             .push("\";")
             .push_end_of_line()
+            .push_line("/// Interface version")
             .push_indent()
             .push("pub const VERSION: u32 = ")
             .push(&interface.version.to_string())
@@ -655,12 +659,13 @@ impl Generator {
         self.buffer.decrease_indent().push_line("}");
     }
 
-    fn generate_enum_start(&mut self, name: &str) {
+    fn generate_enum_start(&mut self, enumeration: &Enum) {
+        self.buffer.push_end_of_line();
+        self.generate_comment(&enumeration.description);
         self.buffer
-            .push_end_of_line()
             .push_indent()
             .push("pub mod ")
-            .push(&name)
+            .push(&enumeration.name)
             .push(" {\n")
             .increase_indent();
     }
@@ -674,6 +679,7 @@ impl Generator {
                 name = format!("_{}", name);
             }
 
+            self.generate_comment(&entry.summary);
             self.buffer
                 .push_indent()
                 .push("pub const ")
@@ -688,20 +694,29 @@ impl Generator {
         self.buffer.decrease_indent().push_line("}");
     }
 
-    fn generate_interface_start(&mut self) {
-        self.buffer.push_end_of_line().push_line("pub trait Interface {").increase_indent();
+    fn generate_interface_start(&mut self, interface: &Interface) {
+        self.buffer
+            .push_end_of_line()
+            .push_indent()
+            .push("/// Interface for '")
+            .push(&interface.name)
+            .push("' object.")
+            .push_end_of_line()
+            .push_line("pub trait Interface {")
+            .increase_indent();
     }
 
     fn generate_interface_end(&mut self) {
         self.buffer.decrease_indent().push_line("}");
     }
 
-    fn generate_request_start(&mut self, name: &str) {
+    fn generate_request_start(&mut self, request: &Message) {
+        self.buffer.push_end_of_line();
+        self.generate_comment(&request.description);
         self.buffer
-            .push_end_of_line()
             .push_indent()
             .push("fn ")
-            .push(util::validate_name(name))
+            .push(util::validate_name(&request.name))
             .push(" (\n")
             .increase_indent()
             .push_line("&mut self,")
@@ -713,12 +728,13 @@ impl Generator {
         self.buffer.decrease_indent().push_line(") -> Task;");
     }
 
-    fn generate_event_start(&mut self, name: &str) {
+    fn generate_event_start(&mut self, event: &Message) {
+        self.buffer.push_end_of_line();
+        self.generate_comment(&event.description);
         self.buffer
-            .push_end_of_line()
             .push_indent()
             .push("pub fn ")
-            .push(util::validate_name(name))
+            .push(util::validate_name(&event.name))
             .push(" (\n")
             .increase_indent()
             .push_line("_socket: &Socket,")
@@ -984,6 +1000,11 @@ impl Generator {
     fn generate_dispatcher(&mut self, protocol_name: &str, interface: &Interface) {
         self.buffer
             .push_end_of_line()
+            .push_indent()
+            .push("/// `Dispatcher` for '")
+            .push(&interface.name)
+            .push("' interface.")
+            .push_end_of_line()
             .push_line("pub struct Dispatcher {}")
             .push_end_of_line()
             .push_line("impl<I: Interface> Disp<I> for Dispatcher {")
@@ -1225,6 +1246,20 @@ impl Generator {
         }
 
         self.buffer.decrease_indent().push_line("));").decrease_indent().push_line("}");
+    }
+
+    fn generate_comment(&mut self, description: &Text) {
+        if let Some(ref comment) = description.text {
+            for line in comment.lines() {
+                self.buffer
+                    .push_indent()
+                    .push("/// ")
+                    .push(line)
+                    .push_end_of_line();
+            }
+        } else {
+            self.buffer.push_line("#[allow(missing_docs)]");
+        }
     }
 }
 
@@ -1585,7 +1620,9 @@ impl Aggregator {
 
     /// Aggregates "entry" attributes of protocol definition XML file.
     fn aggregate_entry(&self, attributes: &Vec<OwnedAttribute>) -> Result<Entry, Error> {
-        Ok(Entry::new(util::get_attr("name", &attributes)?, util::get_attr("value", &attributes)?))
+        Ok(Entry::new(util::get_attr("name", &attributes)?,
+                      util::get_attr("value", &attributes)?,
+                      util::get_optional_attr("summary", &attributes)))
     }
 }
 
